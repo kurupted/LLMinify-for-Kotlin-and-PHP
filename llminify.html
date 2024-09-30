@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Function Extractor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .top-container {
+            display: flex;
+            flex: 1;
+            gap: 20px;
+        }
+        #codeInput {
+            flex: 1;
+            padding: 10px;
+            font-family: monospace;
+            resize: none;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+            min-height: 300px;
+            max-height: 600px;
+            overflow: auto;
+        }
+        .sidebar {
+            width: 40%;
+            display: flex;
+            flex-direction: column;
+        }
+        .sidebar button {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            transition: background-color 0.3s ease;
+        }
+        .sidebar button:hover {
+            background-color: #45a049;
+        }
+        .functions-list {
+            flex: 1;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+            overflow: auto;
+        }
+        .class-item {
+            margin-bottom: 15px;
+        }
+        .class-header {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        .member-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+            padding: 5px;
+            border-radius: 4px;
+            background-color: #eaeaea;
+            transition: background-color 0.3s ease;
+        }
+        .member-item:nth-child(odd) {
+            background-color: #f1f1f1;
+        }
+        .member-item:hover {
+            background-color: #dcdcdc;
+        }
+        .member-item input[type="checkbox"] {
+            margin-right: 5px;
+        }
+        .member-item label {
+            margin-right: 10px;
+            font-size: 14px;
+        }
+        .member-name {
+            font-weight: bold;
+            color: #333;
+        }
+        #outputArea {
+            width: 100%;
+            padding: 10px;
+            font-family: monospace;
+            resize: vertical;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+            margin-top: 20px;
+            height: auto;
+            min-height: 500px;
+        }
+        #copyButton {
+            width: 100%;
+            padding: 10px;
+            margin-top: 10px;
+            cursor: pointer;
+            background-color: #008CBA;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            transition: background-color 0.3s ease;
+        }
+        #copyButton:hover {
+            background-color: #007bb5;
+        }
+        @media (max-width: 800px) {
+            .top-container {
+                flex-direction: column;
+            }
+            .sidebar {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Function Extractor</h1>
+    <div class="top-container">
+        <textarea id="codeInput" placeholder="Paste your Kotlin, PHP, or Java code here..." rows="15"></textarea>
+        <div class="sidebar">
+            <button id="parseButton">Parse Functions</button>
+            <div class="functions-list" id="functionsList">
+                <!-- Classes and their members will appear here -->
+            </div>
+          <label for="chkTrimSpaces"><input type="checkbox" id="chkTrimSpaces" name="chkTrimSpaces"> Trim leading whitespace</label><br>
+            <button id="generateButton">Generate Output</button>
+        </div>
+    </div>
+    <textarea id="outputArea" placeholder="Generated output will appear here..." rows="30"></textarea>
+    <button id="copyButton">Copy Output to Clipboard</button>
+
+    <script>
+        const codeInput = document.getElementById('codeInput');
+        const parseButton = document.getElementById('parseButton');
+        const functionsList = document.getElementById('functionsList');
+        const generateButton = document.getElementById('generateButton');
+        const outputArea = document.getElementById('outputArea');
+        const copyButton = document.getElementById('copyButton');
+
+        // Function to detect language based on code input
+        function detectLanguage(code) {
+            const kotlinIndicators = ["fun ", "class ", "override "];
+            const phpIndicators = ["<?php", "<?", "function "];
+            const javaIndicators = ["public class", "private class", "protected class", "class "];
+
+            if (kotlinIndicators.some(indicator => code.includes(indicator)) && !phpIndicators.some(indicator => code.includes(indicator))) return 'kotlin';
+            if (phpIndicators.some(indicator => code.includes(indicator))) return 'php';
+            if (javaIndicators.some(indicator => code.includes(indicator))) return 'java';
+            return 'unknown';
+        }
+
+        // Function to extract classes from the code
+        function extractClasses(code) {
+            const language = detectLanguage(code);
+            let classPattern;
+            
+            switch (language) {
+                case 'kotlin':
+                    // Updated regex to handle constructor modifiers
+                    classPattern = /(?:public|private|protected|internal|open|abstract|final|data|sealed|inner\s+)?class\s+([A-Za-z0-9_<>]+)(?:\s+(?:\w+\s+constructor\s*\([^)]*\))?)?(?:\s*:\s*[A-Za-z0-9_<>,\s()]+)?\s*\{/g;
+                    break;
+                case 'php':
+                    classPattern = /(?:class|interface|trait)\s+([A-Za-z0-9_]+)(?:\s*extends\s+[A-Za-z0-9_]+)?(?:\s*implements\s+[A-Za-z0-9_,\s]+)?\s*\{/g;
+                    break;
+                case 'java':
+                    classPattern = /(?:public|private|protected)?\s*class\s+([A-Za-z0-9_<>]+)(?:\s*extends\s+[A-Za-z0-9_<>]+)?(?:\s*implements\s+[A-Za-z0-9_<>,\s]+)?\s*\{/g;
+                    break;
+                default:
+                    return [];
+            }
+
+            const classes = [];
+            let match;
+
+            while ((match = classPattern.exec(code)) !== null) {
+                const className = match[1];
+                const classStartIndex = match.index + match[0].length;
+                const { classBody, newIndex } = extractClassBody(code, classStartIndex);
+                const classContent = parseClassBody(classBody, language);
+                classes.push({
+                    name: className,
+                    variables: classContent.variables,
+                    functions: classContent.functions,
+                    classIndex: classes.length
+                });
+                classPattern.lastIndex = newIndex;
+            }
+
+            console.log('Extracted classes:', classes); // Debugging
+            return classes;
+        }
+
+        // Function to extract class body using brace counting
+        function extractClassBody(code, startIndex) {
+            let braceCount = 1;
+            let currentIndex = startIndex;
+            const codeLength = code.length;
+            let classBody = '';
+
+            while (currentIndex < codeLength && braceCount > 0) {
+                const char = code[currentIndex];
+                if (char === '{') braceCount++;
+                if (char === '}') braceCount--;
+                if (braceCount > 0) classBody += char;
+                currentIndex++;
+            }
+
+            return { classBody, newIndex: currentIndex };
+        }
+
+        // Function to parse class body and extract variables and functions
+        function parseClassBody(body, language) {
+            const functions = [];
+            let variables = '';
+
+            const lines = body.split('\n');
+            const totalLines = lines.length;
+            let i = 0;
+            let pendingAnnotations = [];
+            let insideFunction = false;
+            let functionBuffer = '';
+            let braceCount = 0;
+
+            while (i < totalLines) {
+                let line = lines[i];
+                let trimmedLine = line.trim();
+
+                // Handle annotations
+                if (trimmedLine.startsWith('@')) {
+                    pendingAnnotations.push(trimmedLine);
+                    i++;
+                    continue;
+                }
+
+                // Detect function start
+                let funcRegex;
+                if (language === 'php') {
+                    funcRegex = /^(?:public|private|protected|static|\s)*function\s+([A-Za-z0-9_]+)\s*\(/;
+                } else if (language === 'kotlin') {
+                    funcRegex = /^(?:public|private|protected|internal|override|suspend|inline|tailrec|operator|infix|external|const|lateinit|data|inner|open|final|abstract|sealed|crossinline|reified|\w+)*\s*fun\s+([A-Za-z0-9_<>]+)\s*\(/;
+                } else if (language === 'java') {
+                    funcRegex = /^(?:public|private|protected|static|\s)*\s*([A-Za-z0-9_<>]+)\s*\(([^)]*)\)\s*(?:throws\s+[A-Za-z0-9_,\s]+)?\s*\{/;
+                }
+
+                const funcMatch = funcRegex ? funcRegex.exec(trimmedLine) : null;
+
+                if (funcMatch) {
+                    // Start of a function
+                    const funcName = funcMatch[1];
+                    const funcParams = funcMatch[2] || '';
+                    insideFunction = true;
+                    functionBuffer = line + '\n';
+                    braceCount = (line.match(/{/g) || []).length - (line.match(/}/g) || []).length;
+                    i++;
+
+                    // If braceCount <= 0, the opening brace is not yet found, accumulate lines until '{' is found
+                    while (braceCount <= 0 && i < totalLines) {
+                        const nextLine = lines[i];
+                        functionBuffer += nextLine + '\n';
+                        braceCount += (nextLine.match(/{/g) || []).length;
+                        braceCount -= (nextLine.match(/}/g) || []).length;
+                        i++;
+                    }
+
+                    // Now, accumulate function body until braces are balanced
+                    while (i < totalLines && braceCount > 0) {
+                        const currentLine = lines[i];
+                        functionBuffer += currentLine + '\n';
+                        braceCount += (currentLine.match(/{/g) || []).length;
+                        braceCount -= (currentLine.match(/}/g) || []).length;
+                        i++;
+                    }
+
+                    // Split functionBuffer into signature and body
+                    const signatureEndIndex = functionBuffer.indexOf('{');
+                    const signature = signatureEndIndex !== -1 ? functionBuffer.substring(0, signatureEndIndex).trim() : functionBuffer.trim();
+                    // The body is not needed for definition; it's handled during output
+
+                    functions.push({
+                        name: funcName,
+                        signature: signature,
+                        fullText: functionBuffer.trim(),
+                        annotations: [...pendingAnnotations]
+                    });
+
+                    // Reset annotations and function buffer
+                    pendingAnnotations = [];
+                    functionBuffer = '';
+                    insideFunction = false;
+                } else {
+                    // Not a function, consider as variable
+                    variables += line + '\n';
+                    i++;
+                }
+            }
+
+            // Trim and clean variables
+            variables = variables.trim();
+
+            console.log('Parsed Class Content:', { variables, functions }); // Debugging
+            return { variables, functions };
+        }
+
+        // Recursive function to display classes and their members
+        function displayClasses(classes, parentDiv) {
+            classes.forEach(cls => {
+                const classDiv = document.createElement('div');
+                classDiv.className = 'class-item';
+
+                const classHeader = document.createElement('div');
+                classHeader.className = 'class-header';
+                classHeader.innerText = `Class: ${cls.name}`;
+                classDiv.appendChild(classHeader);
+
+                // Add "Include Class Variables" checkbox
+                const varsDiv = document.createElement('div');
+                varsDiv.className = 'member-item';
+                const varsCheckbox = document.createElement('input');
+                varsCheckbox.type = 'checkbox';
+                varsCheckbox.id = `vars_${cls.classIndex}`;
+                varsCheckbox.checked = true;
+                const varsLabel = document.createElement('label');
+                varsLabel.htmlFor = `vars_${cls.classIndex}`;
+                varsLabel.innerText = 'Include Class Variables';
+                varsDiv.appendChild(varsCheckbox);
+                varsDiv.appendChild(varsLabel);
+                classDiv.appendChild(varsDiv);
+
+                // Functions Section
+                cls.functions.forEach((func, index) => {
+                    const funcDiv = document.createElement('div');
+                    funcDiv.className = 'member-item';
+
+                    const includeCheckbox = document.createElement('input');
+                    includeCheckbox.type = 'checkbox';
+                    includeCheckbox.id = `include_${cls.classIndex}_${index}`;
+                    includeCheckbox.checked = false;
+
+                    const includeLabel = document.createElement('label');
+                    includeLabel.htmlFor = `include_${cls.classIndex}_${index}`;
+                    includeLabel.innerText = 'Include';
+
+                    const definitionCheckbox = document.createElement('input');
+                    definitionCheckbox.type = 'checkbox';
+                    definitionCheckbox.id = `definition_${cls.classIndex}_${index}`;
+                    definitionCheckbox.checked = true;
+
+                    const definitionLabel = document.createElement('label');
+                    definitionLabel.htmlFor = `definition_${cls.classIndex}_${index}`;
+                    definitionLabel.innerText = 'Definition';
+
+                    const funcName = document.createElement('span');
+                    funcName.className = 'member-name';
+                    funcName.innerText = ` ${func.name}`;
+
+                    funcDiv.appendChild(includeCheckbox);
+                    funcDiv.appendChild(includeLabel);
+                    funcDiv.appendChild(definitionCheckbox);
+                    funcDiv.appendChild(definitionLabel);
+                    funcDiv.appendChild(funcName);
+
+                    classDiv.appendChild(funcDiv);
+                });
+
+                functionsList.appendChild(classDiv);
+            });
+        }
+
+        // Event listener for Parse Button
+        parseButton.addEventListener('click', () => {
+            const code = codeInput.value;
+            const classes = extractClasses(code);
+
+            functionsList.innerHTML = '';
+
+            if (classes.length === 0) {
+                functionsList.innerHTML = '<p>No classes found.</p>';
+                return;
+            }
+
+            displayClasses(classes, functionsList);
+
+            // Store classes data for output generation
+            functionsList.dataset.classes = JSON.stringify(classes);
+            console.log('Stored classes data:', classes); // Debugging
+        });
+
+        // Event listener for Generate Button
+        generateButton.addEventListener('click', () => {
+            const classesData = functionsList.dataset.classes;
+            
+            if (!classesData) {
+                alert('No classes to generate. Please parse functions first.');
+                return;
+            }
+
+            const classes = JSON.parse(classesData);
+            let output = '';
+
+            classes.forEach(cls => {
+                output += `class ${cls.name} {\n`;
+
+                // Include class variables if checkbox is checked
+                const includeVars = document.getElementById(`vars_${cls.classIndex}`).checked;
+                if (includeVars && cls.variables) {
+                    const variableLines = cls.variables.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+                    variableLines.forEach(line => {
+                        output += `    ${line}\n`;
+                    });
+                    output += `\n`;
+                }
+
+                // Include functions based on selection
+                cls.functions.forEach((func, index) => {
+                    const include = document.getElementById(`include_${cls.classIndex}_${index}`).checked;
+                    const definition = document.getElementById(`definition_${cls.classIndex}_${index}`).checked;
+
+                    if (include || definition) {
+                        if (include) {
+                            const indentedFunction = func.fullText.split('\n').map(line => '    ' + line).join('\n');
+                            output += `\n${indentedFunction}\n`;
+                        } else if (definition) {
+                            // Extract the full signature
+                            const signature = func.signature;
+                            // Append an empty function body
+                            output += `\n    ${signature} {\n    }\n`;
+                        }
+                    }
+                });
+
+                output += `}\n\n`;
+            });
+
+          if (document.getElementById('chkTrimSpaces').checked){
+            outputArea.value = removeLeadingWhitespace(output);
+          }else{
+            outputArea.value = output;
+          }
+        });
+
+      function removeLeadingWhitespace(inputString) {
+          // Use a regular expression to target leading whitespace on each line
+          return inputString.replace(/^[ \t]+/gm, '');
+      }
+
+        // Event listener for Copy Button
+        copyButton.addEventListener('click', () => {
+            const outputText = outputArea.value;
+            if (outputText.trim() === '') {
+                alert('Nothing to copy.');
+                return;
+            }
+
+            navigator.clipboard.writeText(outputText).then(() => {
+                alert('Output copied to clipboard!');
+            }).catch(err => {
+                console.error('Failed to copy: ', err);
+                alert('Failed to copy to clipboard.');
+            });
+        });
+    </script>
+</body>
+</html>
