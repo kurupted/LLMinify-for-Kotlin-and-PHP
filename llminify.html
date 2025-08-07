@@ -159,56 +159,63 @@
 
         // Function to detect language based on code input
         function detectLanguage(code) {
-            const kotlinIndicators = ["fun ", "class ", "override "];
-            const phpIndicators = ["<?php", "<?", "function "];
-            const javaIndicators = ["public class", "private class", "protected class", "class "];
-
-            if (kotlinIndicators.some(indicator => code.includes(indicator)) && !phpIndicators.some(indicator => code.includes(indicator))) return 'kotlin';
-            if (phpIndicators.some(indicator => code.includes(indicator))) return 'php';
-            if (javaIndicators.some(indicator => code.includes(indicator))) return 'java';
+            if (code.includes("<?php") || code.includes("<?")) {
+                return 'php';
+            }
+            if (code.includes("fun ")) { // "fun" is highly specific to Kotlin.
+                return 'kotlin';
+            }
+            if (code.includes("function ")) { // Check for PHP's "function" only if Kotlin's "fun" isn't present.
+                return 'php';
+            }
+            if (code.includes("public class") || code.includes("import java.")) {
+                return 'java';
+            }
+            if (code.includes("class ")) { // Default to Kotlin for any remaining "class" files.
+                return 'kotlin';
+            }
             return 'unknown';
         }
 
         // Function to extract classes from the code
-        function extractClasses(code) {
-            const language = detectLanguage(code);
-            let classPattern;
-            
-            switch (language) {
-                case 'kotlin':
-                    // Updated regex to handle constructor modifiers
-                    classPattern = /(?:public|private|protected|internal|open|abstract|final|data|sealed|inner\s+)?class\s+([A-Za-z0-9_<>]+)(?:\s+(?:\w+\s+constructor\s*\([^)]*\))?)?(?:\s*:\s*[A-Za-z0-9_<>,\s()]+)?\s*\{/g;
-                    break;
-                case 'php':
-                    classPattern = /(?:class|interface|trait)\s+([A-Za-z0-9_]+)(?:\s*extends\s+[A-Za-z0-9_]+)?(?:\s*implements\s+[A-Za-z0-9_,\s]+)?\s*\{/g;
-                    break;
-                case 'java':
-                    classPattern = /(?:public|private|protected)?\s*class\s+([A-Za-z0-9_<>]+)(?:\s*extends\s+[A-Za-z0-9_<>]+)?(?:\s*implements\s+[A-Za-z0-9_<>,\s]+)?\s*\{/g;
-                    break;
-                default:
-                    return [];
-            }
+        function extractClasses(code) {
+            const language = detectLanguage(code);
+            let classPattern;
+            
+            switch (language) {
+                case 'kotlin':
+                    classPattern = /(?:data\s+|open\s+|public\s+|private\s+|protected\s+|internal\s+|abstract\s+|final\s+|sealed\s+|inner\s+)*class\s+([A-Za-z0-9_<>]+)[\s\S]*?\{/g;
+                    break;
+                case 'php':
+                    classPattern = /(?:class|interface|trait)\s+([A-Za-z0-9_]+)(?:\s*extends\s+[A-Za-z0-9_]+)?(?:\s*implements\s+[A-Za-z0-9_,\s]+)?\s*\{/g;
+                    break;
+                case 'java':
+                    classPattern = /(?:public|private|protected)?\s*class\s+([A-Za-z0-9_<>]+)(?:\s*extends\s+[A-Za-z0-9_<>]+)?(?:\s*implements\s+[A-Za-z0-9_<>,\s]+)?\s*\{/g;
+                    break;
+                default:
+                    return [];
+            }
 
-            const classes = [];
-            let match;
+            const classes = [];
+            let match;
 
-            while ((match = classPattern.exec(code)) !== null) {
-                const className = match[1];
-                const classStartIndex = match.index + match[0].length;
-                const { classBody, newIndex } = extractClassBody(code, classStartIndex);
-                const classContent = parseClassBody(classBody, language);
-                classes.push({
-                    name: className,
-                    variables: classContent.variables,
-                    functions: classContent.functions,
-                    classIndex: classes.length
-                });
-                classPattern.lastIndex = newIndex;
-            }
+            while ((match = classPattern.exec(code)) !== null) {
+                const className = match[1];
+                const classStartIndex = match.index + match[0].length;
+                const { classBody, newIndex } = extractClassBody(code, classStartIndex);
+                const classContent = parseClassBody(classBody, language);
+                classes.push({
+                    name: className,
+                    variables: classContent.variables,
+                    functions: classContent.functions,
+                    classIndex: classes.length
+                });
+                classPattern.lastIndex = newIndex;
+            }
 
-            console.log('Extracted classes:', classes); // Debugging
-            return classes;
-        }
+            console.log('Extracted classes:', classes); // Debugging
+            return classes;
+        }
 
         // Function to extract class body using brace counting
         function extractClassBody(code, startIndex) {
@@ -228,98 +235,101 @@
             return { classBody, newIndex: currentIndex };
         }
 
-        // Function to parse class body and extract variables and functions
-        function parseClassBody(body, language) {
-            const functions = [];
-            let variables = '';
+        // Helper function to strip single-line comments for accurate brace counting
+        function stripComments(line) {
+            const commentIndex = line.indexOf('//');
+            return commentIndex === -1 ? line : line.substring(0, commentIndex);
+        }
 
-            const lines = body.split('\n');
-            const totalLines = lines.length;
-            let i = 0;
-            let pendingAnnotations = [];
-            let insideFunction = false;
-            let functionBuffer = '';
-            let braceCount = 0;
+        // Function to parse class body and extract variables and functions
+        function parseClassBody(body, language) {
+            const functions = [];
+            let variables = '';
 
-            while (i < totalLines) {
-                let line = lines[i];
-                let trimmedLine = line.trim();
+            const lines = body.split('\n');
+            const totalLines = lines.length;
+            let i = 0;
+            let pendingAnnotations = [];
+            let insideFunction = false;
+            let functionBuffer = '';
+            let braceCount = 0;
 
-                // Handle annotations
-                if (trimmedLine.startsWith('@')) {
-                    pendingAnnotations.push(trimmedLine);
-                    i++;
-                    continue;
-                }
+            while (i < totalLines) {
+                let line = lines[i];
+                let trimmedLine = line.trim();
 
-                // Detect function start
-                let funcRegex;
-                if (language === 'php') {
-                    funcRegex = /^(?:public|private|protected|static|\s)*function\s+([A-Za-z0-9_]+)\s*\(/;
-                } else if (language === 'kotlin') {
-                    funcRegex = /^(?:public|private|protected|internal|override|suspend|inline|tailrec|operator|infix|external|const|lateinit|data|inner|open|final|abstract|sealed|crossinline|reified|\w+)*\s*fun\s+([A-Za-z0-9_<>]+)\s*\(/;
-                } else if (language === 'java') {
-                    funcRegex = /^(?:public|private|protected|static|\s)*\s*([A-Za-z0-9_<>]+)\s*\(([^)]*)\)\s*(?:throws\s+[A-Za-z0-9_,\s]+)?\s*\{/;
-                }
+                // Handle annotations
+                if (trimmedLine.startsWith('@')) {
+                    pendingAnnotations.push(trimmedLine);
+                    i++;
+                    continue;
+                }
 
-                const funcMatch = funcRegex ? funcRegex.exec(trimmedLine) : null;
+                // Detect function start
+                let funcRegex;
+                if (language === 'php') {
+                    funcRegex = /^(?:public|private|protected|static|\s)*function\s+([A-Za-z0-9_]+)\s*\(/;
+                } else if (language === 'kotlin') {
+                    funcRegex = /^(?:public|private|protected|internal|override|suspend|inline|tailrec|operator|infix|external|const|lateinit|data|inner|open|final|abstract|sealed|crossinline|reified|\w+)*\s*fun\s+([A-Za-z0-9_<>]+)\s*\(/;
+                } else if (language === 'java') {
+                    funcRegex = /^(?:public|private|protected|static|\s)*\s*([A-Za-z0-9_<>]+)\s*\(([^)]*)\)\s*(?:throws\s+[A-Za-z0-9_,\s]+)?\s*\{/;
+                }
 
-                if (funcMatch) {
-                    // Start of a function
-                    const funcName = funcMatch[1];
-                    const funcParams = funcMatch[2] || '';
-                    insideFunction = true;
-                    functionBuffer = line + '\n';
-                    braceCount = (line.match(/{/g) || []).length - (line.match(/}/g) || []).length;
-                    i++;
+                const funcMatch = funcRegex ? funcRegex.exec(stripComments(trimmedLine)) : null;
 
-                    // If braceCount <= 0, the opening brace is not yet found, accumulate lines until '{' is found
-                    while (braceCount <= 0 && i < totalLines) {
-                        const nextLine = lines[i];
-                        functionBuffer += nextLine + '\n';
-                        braceCount += (nextLine.match(/{/g) || []).length;
-                        braceCount -= (nextLine.match(/}/g) || []).length;
-                        i++;
-                    }
+                if (funcMatch) {
+                    const funcName = funcMatch[1];
+                    insideFunction = true;
+                    functionBuffer = line + '\n';
+                    
+                    // Use the stripped line for accurate initial brace counting
+                    let lineForBraceCounting = stripComments(line);
+                    braceCount = (lineForBraceCounting.match(/{/g) || []).length - (lineForBraceCounting.match(/}/g) || []).length;
+                    i++;
 
-                    // Now, accumulate function body until braces are balanced
-                    while (i < totalLines && braceCount > 0) {
-                        const currentLine = lines[i];
-                        functionBuffer += currentLine + '\n';
-                        braceCount += (currentLine.match(/{/g) || []).length;
-                        braceCount -= (currentLine.match(/}/g) || []).length;
-                        i++;
-                    }
+                    // Accumulate lines until opening brace is found (if not on the first line)
+                    while (braceCount <= 0 && i < totalLines) {
+                        const nextLine = lines[i];
+                        functionBuffer += nextLine + '\n';
+                        lineForBraceCounting = stripComments(nextLine);
+                        braceCount += (lineForBraceCounting.match(/{/g) || []).length;
+                        braceCount -= (lineForBraceCounting.match(/}/g) || []).length;
+                        i++;
+                    }
 
-                    // Split functionBuffer into signature and body
-                    const signatureEndIndex = functionBuffer.indexOf('{');
-                    const signature = signatureEndIndex !== -1 ? functionBuffer.substring(0, signatureEndIndex).trim() : functionBuffer.trim();
-                    // The body is not needed for definition; it's handled during output
+                    // Now, accumulate the rest of the function body until braces are balanced
+                    while (i < totalLines && braceCount > 0) {
+                        const currentLine = lines[i];
+                        functionBuffer += currentLine + '\n';
+                        lineForBraceCounting = stripComments(currentLine);
+                        braceCount += (lineForBraceCounting.match(/{/g) || []).length;
+                        braceCount -= (lineForBraceCounting.match(/}/g) || []).length;
+                        i++;
+                    }
 
-                    functions.push({
-                        name: funcName,
-                        signature: signature,
-                        fullText: functionBuffer.trim(),
-                        annotations: [...pendingAnnotations]
-                    });
+                    const signatureEndIndex = functionBuffer.indexOf('{');
+                    const signature = signatureEndIndex !== -1 ? functionBuffer.substring(0, signatureEndIndex).trim() : functionBuffer.trim();
 
-                    // Reset annotations and function buffer
-                    pendingAnnotations = [];
-                    functionBuffer = '';
-                    insideFunction = false;
-                } else {
-                    // Not a function, consider as variable
-                    variables += line + '\n';
-                    i++;
-                }
-            }
+                    functions.push({
+                        name: funcName,
+                        signature: signature,
+                        fullText: functionBuffer.trim(),
+                        annotations: [...pendingAnnotations]
+                    });
 
-            // Trim and clean variables
-            variables = variables.trim();
+                    pendingAnnotations = [];
+                    functionBuffer = '';
+                    insideFunction = false;
+                } else {
+                    variables += line + '\n';
+                    i++;
+                }
+            }
 
-            console.log('Parsed Class Content:', { variables, functions }); // Debugging
-            return { variables, functions };
-        }
+            variables = variables.trim();
+            console.log('Parsed Class Content:', { variables, functions }); // Debugging
+            return { variables, functions };
+        }
 
         // Recursive function to display classes and their members
         function displayClasses(classes, parentDiv) {
